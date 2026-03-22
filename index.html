@@ -35,31 +35,26 @@ document.addEventListener('DOMContentLoaded', function() {
     .then(r=>r.json())
     .then(data=>{
       const filename = data.query.pages[0].images[0].title;
-      const step2 = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cdescription%7Cuser&titles=${encodeURIComponent(filename)}&origin=*`;
+      const step2 = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles=${encodeURIComponent(filename)}&origin=*`;
 
       return fetch(step2).then(r=>r.json()).then(data2=>{
-        const pages = data2.query.pages;
-        const page = Object.values(pages)[0];
+        const page = Object.values(data2.query.pages)[0];
         const info = page.imageinfo[0];
+        const meta = info.extmetadata;
 
         document.getElementById('bg').src = info.url;
-        document.getElementById('title').textContent =
-          filename.replace('File:','').replace(/\.[^.]+$/,'');
-        document.getElementById('artist').textContent = info.user || '';
 
-        const rawDesc = (info.description || '').replace(/<[^>]*>/g,'').trim();
+        // タイトル（英語の正式名称）
+        const title = (meta?.ObjectName?.value || filename.replace('File:','').replace(/\.[^.]+$/,''));
+        document.getElementById('title').textContent = title;
 
-        const transUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(rawDesc)}`;
+        // 作者
+        const artist = (meta?.Artist?.value || '').replace(/<[^>]*>/g,'').trim();
+        document.getElementById('artist').textContent = artist;
 
-        fetch(transUrl)
-          .then(r=>r.json())
-          .then(transData=>{
-            const translated = transData[0].map(s=>s[0]).join('');
-            document.getElementById('desc').textContent = translated;
-          })
-          .catch(()=>{
-            document.getElementById('desc').textContent = rawDesc;
-          });
+        // 説明文（英語）をそのまま表示
+        const desc = (meta?.ImageDescription?.value || '').replace(/<[^>]*>/g,'').trim();
+        document.getElementById('desc').textContent = desc || '説明なし';
       });
     })
     .catch(()=>{
