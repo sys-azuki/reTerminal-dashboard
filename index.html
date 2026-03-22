@@ -29,15 +29,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-  // Step1: 今日のPOTDファイル名を取得
   const step1 = `https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/${dateStr}&origin=*`;
 
   fetch(step1)
     .then(r=>r.json())
     .then(data=>{
       const filename = data.query.pages[0].images[0].title;
-
-      // Step2: ファイルのURLを取得
       const step2 = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cdescription%7Cuser&titles=${encodeURIComponent(filename)}&origin=*`;
 
       return fetch(step2).then(r=>r.json()).then(data2=>{
@@ -49,8 +46,20 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('title').textContent =
           filename.replace('File:','').replace(/\.[^.]+$/,'');
         document.getElementById('artist').textContent = info.user || '';
-        document.getElementById('desc').textContent =
-          (info.description || '').replace(/<[^>]*>/g,'').slice(0,150)+'...';
+
+        const rawDesc = (info.description || '').replace(/<[^>]*>/g,'').trim();
+
+        const transUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(rawDesc)}`;
+
+        fetch(transUrl)
+          .then(r=>r.json())
+          .then(transData=>{
+            const translated = transData[0].map(s=>s[0]).join('');
+            document.getElementById('desc').textContent = translated;
+          })
+          .catch(()=>{
+            document.getElementById('desc').textContent = rawDesc;
+          });
       });
     })
     .catch(()=>{
