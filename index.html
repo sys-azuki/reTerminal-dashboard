@@ -26,16 +26,35 @@ document.addEventListener('DOMContentLoaded', function() {
   const d = new Date();
   document.getElementById('date').textContent =
     d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');
-  const url = `https://api.wikimedia.org/feed/v1/wikipedia/en/featured/${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-  fetch(url,{headers:{'Api-User-Agent':'reTerminal-Dashboard/1.0'}})
+
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  // Step1: 今日のPOTDファイル名を取得
+  const step1 = `https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/${dateStr}&origin=*`;
+
+  fetch(step1)
     .then(r=>r.json())
     .then(data=>{
-      const img=data.image;
-      if(!img){document.getElementById('title').textContent='本日の画像なし';return;}
-      document.getElementById('bg').src=img.image?.source||img.thumbnail?.source;
-      document.getElementById('title').textContent=(img.title||'').replace(/^File:/,'').replace(/\.[^.]+$/,'');
-      document.getElementById('artist').textContent=img.artist?.text||'';
-      document.getElementById('desc').textContent=(img.description?.text||'').slice(0,150)+'...';
+      const filename = data.query.pages[0].images[0].title;
+
+      // Step2: ファイルのURLを取得
+      const step2 = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cdescription%7Cuser&titles=${encodeURIComponent(filename)}&origin=*`;
+
+      return fetch(step2).then(r=>r.json()).then(data2=>{
+        const pages = data2.query.pages;
+        const page = Object.values(pages)[0];
+        const info = page.imageinfo[0];
+
+        document.getElementById('bg').src = info.url;
+        document.getElementById('title').textContent =
+          filename.replace('File:','').replace(/\.[^.]+$/,'');
+        document.getElementById('artist').textContent = info.user || '';
+        document.getElementById('desc').textContent =
+          (info.description || '').replace(/<[^>]*>/g,'').slice(0,150)+'...';
+      });
+    })
+    .catch(()=>{
+      document.getElementById('title').textContent = '取得エラー';
     });
 });
 </script>
