@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        width: 800px;
+        height: 480px;
+        overflow: hidden;
+        background: #111;
+        font-family: sans-serif;
+      }
+      #bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      #overlay-bottom {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 60px 20px 16px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+        color: white;
+      }
+      #title {
+        font-size: 22px;
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+      #artist {
+        font-size: 13px;
+        opacity: 0.75;
+        margin-bottom: 8px;
+      }
+      #desc {
+        font-size: 11px;
+        opacity: 0.7;
+        line-height: 1.6;
+      }
+      #date {
+        position: absolute;
+        top: 12px;
+        right: 16px;
+        color: white;
+        font-size: 11px;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="bg" src="" />
+    <div id="date"></div>
+    <div id="overlay-bottom">
+      <div id="title">読み込み中...</div>
+      <div id="artist"></div>
+      <div id="desc"></div>
+    </div>
+    <script>
+      const d = new Date();
+      document.getElementById("date").textContent =
+        d.getFullYear() +
+        "." +
+        String(d.getMonth() + 1).padStart(2, "0") +
+        "." +
+        String(d.getDate()).padStart(2, "0");
+
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const url = `https://api.wikimedia.org/feed/v1/wikipedia/en/featured/${y}/${m}/${day}`;
+
+      fetch(url, { headers: { "Api-User-Agent": "reTerminal-Dashboard/1.0" } })
+        .then((r) => r.json())
+        .then((data) => {
+          const img = data.image;
+          if (!img) {
+            document.getElementById("title").textContent = "本日の画像なし";
+            return;
+          }
+          document.getElementById("bg").src = img.thumbnail.source.replace(
+            /\/\d+px-/,
+            "/800px-",
+          );
+          document.getElementById("title").textContent = img.title || "";
+          document.getElementById("artist").textContent =
+            img.artist?.text || "";
+          document.getElementById("desc").textContent =
+            (img.description?.text || "").slice(0, 150) + "...";
+        })
+        .catch(() => {
+          document.getElementById("title").textContent = "取得エラー";
+        });
+    </script>
+  </body>
+</html>
