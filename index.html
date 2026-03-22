@@ -54,7 +54,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // 説明文（英語）をそのまま表示
         const desc = (meta?.ImageDescription?.value || '').replace(/<[^>]*>/g,'').trim();
-        document.getElementById('desc').textContent = desc || '説明なし';
+        if (!desc) {
+          document.getElementById('desc').textContent = '説明なし';
+          return;
+        }
+        // MyMemory APIで日本語に翻訳
+        fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(desc)}&langpair=en|ja`)
+          .then(r=>r.json())
+          .then(t=>{
+            document.getElementById('desc').textContent =
+              t.responseData?.translatedText || desc;
+          })
+          .catch(()=>{
+            document.getElementById('desc').textContent = desc;
+          });
       });
     })
     .catch(()=>{
