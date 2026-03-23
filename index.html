@@ -14,66 +14,12 @@ img#bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; 
 </style>
 </head>
 <body>
-<img id="bg" src="">
-<div id="date"></div>
+<img id="bg" src="https://upload.wikimedia.org/wikipedia/commons/6/6e/Maria_Tudor1.jpg">
+<div id="date">2026.03.23</div>
 <div id="overlay">
-  <div id="title">読み込み中...</div>
-  <div id="artist"></div>
-  <div id="desc"></div>
+  <div id="title"><b>La reina <a href="//commons.wikimedia.org/wiki/Mary_I_of_England" title="Mary I of England">María Tudor</a>, reina de Inglaterra, segunda esposa de Felipe II</b>.</div>
+  <div id="artist">Antonis Mor</div>
+  <div id="desc">イングランドのメアリー1世女王の肖像、アントニス・モール、1554年。</div>
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  const d = new Date();
-  document.getElementById('date').textContent =
-    d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');
-
-  const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-
-  const step1 = `https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/${dateStr}&origin=*`;
-
-  fetch(step1)
-    .then(r=>r.json())
-    .then(data=>{
-      const filename = data.query.pages[0].images[0].title;
-      const step2 = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles=${encodeURIComponent(filename)}&origin=*`;
-
-      return fetch(step2).then(r=>r.json()).then(data2=>{
-        const page = Object.values(data2.query.pages)[0];
-        const info = page.imageinfo[0];
-        const meta = info.extmetadata;
-
-        document.getElementById('bg').src = info.url;
-
-        // タイトル（英語の正式名称）
-        const title = (meta?.ObjectName?.value || filename.replace('File:','').replace(/\.[^.]+$/,''));
-        document.getElementById('title').textContent = title;
-
-        // 作者
-        const artist = (meta?.Artist?.value || '').replace(/<[^>]*>/g,'').trim();
-        document.getElementById('artist').textContent = artist;
-
-        // 説明文（英語）をそのまま表示
-        const desc = (meta?.ImageDescription?.value || '').replace(/<[^>]*>/g,'').trim();
-        if (!desc) {
-          document.getElementById('desc').textContent = '説明なし';
-          return;
-        }
-        // MyMemory APIで日本語に翻訳
-        fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(desc)}&langpair=en|ja`)
-          .then(r=>r.json())
-          .then(t=>{
-            document.getElementById('desc').textContent =
-              t.responseData?.translatedText || desc;
-          })
-          .catch(()=>{
-            document.getElementById('desc').textContent = desc;
-          });
-      });
-    })
-    .catch(()=>{
-      document.getElementById('title').textContent = '取得エラー';
-    });
-});
-</script>
 </body>
 </html>
