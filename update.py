@@ -6,32 +6,32 @@ import re
 
 today = datetime.datetime.utcnow()
 date_wiki = today.strftime('%Y-%m-%d')
+y = today.strftime('%Y')
+m = today.strftime('%m')
+d = today.strftime('%d')
 
-# Step1: POTDのファイル名取得
-url1 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/{date_wiki}&origin=*"
-req = urllib.request.Request(url1, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+# Step1: Wikimedia Featured Content API から今日の注目画像取得
+url1 = f"https://api.wikimedia.org/feed/v1/wikipedia/en/featured/{y}/{m}/{d}"
+req = urllib.request.Request(url1, headers={
+    'User-Agent': 'reTerminal-Dashboard/1.0 (github-actions)',
+    'Api-User-Agent': 'reTerminal-Dashboard/1.0'
+})
 with urllib.request.urlopen(req) as r:
-    data1 = json.loads(r.read())
-filename = data1['query']['pages'][0]['images'][0]['title']
+    data = json.loads(r.read())
 
-# Step2: 画像URL・メタデータ取得
-url2 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles={urllib.parse.quote(filename)}&origin=*"
-req2 = urllib.request.Request(url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-with urllib.request.urlopen(req2) as r:
-    data2 = json.loads(r.read())
-page = list(data2['query']['pages'].values())[0]
-info = page['imageinfo'][0]
-meta = info.get('extmetadata', {})
-
-image_url = info['url']
-title = meta.get('ObjectName', {}).get('value', filename.replace('File:', '').rsplit('.', 1)[0])
+img = data.get('image', {})
+image_url = img.get('image', {}).get('source', '') or img.get('thumbnail', {}).get('source', '')
+title = img.get('title', '').replace('File:', '').rsplit('.', 1)[0].replace('_', ' ')
 title = re.sub('<[^>]+>', '', title).strip()
-artist = meta.get('Artist', {}).get('value', '')
+artist = img.get('artist', {}).get('text', '')
 artist = re.sub('<[^>]+>', '', artist).strip()
-desc_en = meta.get('ImageDescription', {}).get('value', '')
+desc_en = img.get('description', {}).get('text', '')
 desc_en = re.sub('<[^>]+>', '', desc_en).strip()
 
-# Step3: 説明文を日本語翻訳
+print(f"タイトル: {title}")
+print(f"画像URL: {image_url}")
+
+# Step2: 説明文を日本語翻訳
 desc_ja = desc_en
 if desc_en:
     try:
@@ -43,7 +43,7 @@ if desc_en:
     except:
         desc_ja = desc_en
 
-# Step4: タイトルを日本語翻訳
+# Step3: タイトルを日本語翻訳
 title_ja = title
 if title:
     try:
@@ -55,13 +55,14 @@ if title:
     except:
         title_ja = title
 
-# Step5: Wikipedia検索で豆知識を取得・翻訳
+# Step4: Wikipedia検索で豆知識を取得・翻訳
 trivia = ''
 try:
-    # まずタイトルで検索、ヒットしなければファイル名ベースで検索
-    search_candidates = [title, filename.replace('File:', '').rsplit('.', 1)[0].replace('_', ' ')]
+    search_candidates = [title, img.get('title', '').replace('File:', '').rsplit('.', 1)[0].replace('_', ' ')]
     extract = ''
     for candidate in search_candidates:
+        if not candidate:
+            continue
         search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch={urllib.parse.quote(candidate)}&srlimit=1&origin=*"
         req_s = urllib.request.Request(search_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
         with urllib.request.urlopen(req_s, timeout=10) as r:
@@ -89,7 +90,7 @@ except:
 
 trivia_block = f'<div id="trivia-label">豆知識</div><div id="trivia">{trivia}</div>' if trivia else ''
 
-# Step6: HTML生成
+# Step5: HTML生成
 html = f"""<!DOCTYPE html>
 <html>
 <head>
