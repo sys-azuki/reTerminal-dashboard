@@ -55,15 +55,28 @@ if title:
     except:
         title_ja = title
 
-# Step5: Wikipedia本文から豆知識を取得・翻訳
+# Step5: Wikipedia検索で豆知識を取得・翻訳
 trivia = ''
 try:
-    search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=true&explaintext=true&redirects=1&titles={urllib.parse.quote(title)}&origin=*"
-    req_t = urllib.request.Request(search_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-    with urllib.request.urlopen(req_t, timeout=10) as r:
-        wiki_data = json.loads(r.read())
-    wiki_page = list(wiki_data['query']['pages'].values())[0]
-    extract = wiki_page.get('extract', '')
+    # まずタイトルで検索、ヒットしなければファイル名ベースで検索
+    search_candidates = [title, filename.replace('File:', '').rsplit('.', 1)[0].replace('_', ' ')]
+    extract = ''
+    for candidate in search_candidates:
+        search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch={urllib.parse.quote(candidate)}&srlimit=1&origin=*"
+        req_s = urllib.request.Request(search_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+        with urllib.request.urlopen(req_s, timeout=10) as r:
+            search_data = json.loads(r.read())
+        results = search_data.get('query', {}).get('search', [])
+        if results:
+            found_title = results[0]['title']
+            ext_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=true&explaintext=true&redirects=1&titles={urllib.parse.quote(found_title)}&origin=*"
+            req_e = urllib.request.Request(ext_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+            with urllib.request.urlopen(req_e, timeout=10) as r:
+                ext_data = json.loads(r.read())
+            wiki_page = list(ext_data['query']['pages'].values())[0]
+            extract = wiki_page.get('extract', '')
+            if extract:
+                break
     trivia_en = extract[:300].strip() if extract else ''
     if trivia_en:
         trans_url3 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(trivia_en)}&langpair=autodetect|ja"
