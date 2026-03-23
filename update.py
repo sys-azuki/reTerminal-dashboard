@@ -1,0 +1,112 @@
+import urllib.request
+import json
+import datetime
+import urllib.parse
+import re
+
+today = datetime.datetime.utcnow()
+date_wiki = today.strftime('%Y-%m-%d')
+
+# Step1: POTDのファイル名取得
+url1 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/{date_wiki}&origin=*"
+req = urllib.request.Request(url1, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+with urllib.request.urlopen(req) as r:
+    data1 = json.loads(r.read())
+filename = data1['query']['pages'][0]['images'][0]['title']
+
+# Step2: 画像URL・メタデータ取得
+url2 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles={urllib.parse.quote(filename)}&origin=*"
+req2 = urllib.request.Request(url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+with urllib.request.urlopen(req2) as r:
+    data2 = json.loads(r.read())
+page = list(data2['query']['pages'].values())[0]
+info = page['imageinfo'][0]
+meta = info.get('extmetadata', {})
+
+image_url = info['url']
+title = meta.get('ObjectName', {}).get('value', filename.replace('File:', '').rsplit('.', 1)[0])
+title = re.sub('<[^>]+>', '', title).strip()
+artist = meta.get('Artist', {}).get('value', '')
+artist = re.sub('<[^>]+>', '', artist).strip()
+desc_en = meta.get('ImageDescription', {}).get('value', '')
+desc_en = re.sub('<[^>]+>', '', desc_en).strip()
+
+# Step3: 説明文を日本語翻訳
+desc_ja = desc_en
+if desc_en:
+    try:
+        trans_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(desc_en)}&langpair=autodetect|ja"
+        req3 = urllib.request.Request(trans_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+        with urllib.request.urlopen(req3, timeout=10) as r:
+            trans_data = json.loads(r.read())
+        desc_ja = trans_data['responseData']['translatedText']
+    except:
+        desc_ja = desc_en
+
+# Step4: タイトルを日本語翻訳
+title_ja = title
+if title:
+    try:
+        trans_url2 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(title)}&langpair=autodetect|ja"
+        req4 = urllib.request.Request(trans_url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+        with urllib.request.urlopen(req4, timeout=10) as r:
+            trans_data2 = json.loads(r.read())
+        title_ja = trans_data2['responseData']['translatedText']
+    except:
+        title_ja = title
+
+# Step5: Wikipedia本文から豆知識を取得・翻訳
+trivia = ''
+try:
+    search_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=true&explaintext=true&redirects=1&titles={urllib.parse.quote(title)}&origin=*"
+    req_t = urllib.request.Request(search_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+    with urllib.request.urlopen(req_t, timeout=10) as r:
+        wiki_data = json.loads(r.read())
+    wiki_page = list(wiki_data['query']['pages'].values())[0]
+    extract = wiki_page.get('extract', '')
+    trivia_en = extract[:300].strip() if extract else ''
+    if trivia_en:
+        trans_url3 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(trivia_en)}&langpair=autodetect|ja"
+        req_t2 = urllib.request.Request(trans_url3, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+        with urllib.request.urlopen(req_t2, timeout=10) as r:
+            trans3 = json.loads(r.read())
+        trivia = trans3['responseData']['translatedText']
+except:
+    trivia = ''
+
+trivia_block = f'<div id="trivia-label">豆知識</div><div id="trivia">{trivia}</div>' if trivia else ''
+
+# Step6: HTML生成
+html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family:sans-serif; }}
+#bg-blur {{ position:absolute; inset:0; background:url('{image_url}') center/cover; filter:blur(18px); opacity:0.35; z-index:0; }}
+#bg-wrap {{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:1; }}
+#bg-wrap img {{ max-width:100%; max-height:100%; object-fit:contain; }}
+#overlay {{ position:absolute; bottom:0; left:0; right:0; padding:50px 20px 14px; background:linear-gradient(transparent,rgba(0,0,0,0.88)); color:white; z-index:2; }}
+#title {{ font-size:20px; font-weight:bold; margin-bottom:4px; }}
+#artist {{ font-size:12px; opacity:0.75; margin-bottom:6px; }}
+#desc {{ font-size:13px; opacity:0.85; line-height:1.7; margin-bottom:6px; }}
+#trivia-label {{ font-size:10px; opacity:0.5; margin-bottom:2px; letter-spacing:0.08em; }}
+#trivia {{ font-size:11px; opacity:0.6; line-height:1.6; border-top:0.5px solid rgba(255,255,255,0.3); padding-top:6px; margin-top:4px; }}
+</style>
+</head>
+<body>
+<div id="bg-blur"></div>
+<div id="bg-wrap"><img src="{image_url}"></div>
+<div id="overlay">
+  <div id="title">{title_ja}</div>
+  <div id="artist">{artist}</div>
+  <div id="desc">{desc_ja}</div>
+  {trivia_block}
+</div>
+</body>
+</html>"""
+
+with open('index.html', 'w', encoding='utf-8') as f:
+    f.write(html)
+print(f"完了: {title_ja}")
