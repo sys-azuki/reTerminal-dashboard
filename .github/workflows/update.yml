@@ -1,59 +1,4 @@
-name: Update Dashboard
-
-on:
-  schedule:
-    - cron: '0 22 * * *'  # 毎日22:00 UTC = 翌7:00 JST
-  workflow_dispatch:       # 手動実行ボタンも有効
-
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Fetch Wikimedia and generate HTML
-        run: |
-          python3 << 'EOF'
-          import urllib.request
-          import json
-          import datetime
-          import urllib.parse
-
-          # 今日の日付（UTC）
-          today = datetime.datetime.utcnow()
-          date_path = today.strftime('%Y/%m/%d')
-          date_display = today.strftime('%Y.%m.%d')
-
-          # Step1: POTDのファイル名取得
-          date_wiki = today.strftime('%Y-%m-%d')
-          url1 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/{date_wiki}&origin=*"
-          req = urllib.request.Request(url1, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-          with urllib.request.urlopen(req) as r:
-              data1 = json.loads(r.read())
-          filename = data1['query']['pages'][0]['images'][0]['title']
-
-          # Step2: 画像URL・メタデータ取得
-          url2 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles={urllib.parse.quote(filename)}&origin=*"
-          req2 = urllib.request.Request(url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-          with urllib.request.urlopen(req2) as r:
-              data2 = json.loads(r.read())
-          page = list(data2['query']['pages'].values())[0]
-          info = page['imageinfo'][0]
-          meta = info.get('extmetadata', {})
-
-          image_url = info['url']
-          title = meta.get('ObjectName', {}).get('value', filename.replace('File:','').rsplit('.',1)[0])
-          artist = meta.get('Artist', {}).get('value', '')
-          # HTMLタグ除去
-          import re
-          artist = re.sub('<[^>]+>', '', artist).strip()
-          desc_en = meta.get('ImageDescription', {}).get('value', '')
-          desc_en = re.sub('<[^>]+>', '', desc_en).strip()
-
-          # Step3: MyMemory APIで日本語翻訳
+# Step3: MyMemory APIで日本語翻訳（タイトルも）
           desc_ja = desc_en
           if desc_en:
               trans_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(desc_en)}&langpair=en|ja"
@@ -65,6 +10,17 @@ jobs:
               except:
                   desc_ja = desc_en
 
+          title_ja = title
+          if title:
+              try:
+                  trans_url2 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(title)}&langpair=en|ja"
+                  req4 = urllib.request.Request(trans_url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+                  with urllib.request.urlopen(req4, timeout=10) as r:
+                      trans_data2 = json.loads(r.read())
+                  title_ja = trans_data2['responseData']['translatedText']
+              except:
+                  title_ja = title
+
           # Step4: HTMLを生成
           html = f"""<!DOCTYPE html>
           <html>
@@ -73,34 +29,23 @@ jobs:
           <style>
           * {{ margin:0; padding:0; box-sizing:border-box; }}
           body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family:sans-serif; }}
-          img#bg {{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }}
-          #overlay {{ position:absolute; bottom:0; left:0; right:0; padding:60px 20px 16px; background:linear-gradient(transparent,rgba(0,0,0,0.85)); color:white; }}
-          #title {{ font-size:22px; font-weight:bold; margin-bottom:4px; }}
-          #artist {{ font-size:13px; opacity:0.75; margin-bottom:8px; }}
-          #desc {{ font-size:11px; opacity:0.7; line-height:1.6; }}
-          #date {{ position:absolute; top:12px; right:16px; color:white; font-size:11px; opacity:0.7; }}
+          #bg-wrap {{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#111; }}
+          #bg-wrap img {{ max-width:100%; max-height:100%; object-fit:contain; }}
+          #bg-blur {{ position:absolute; inset:0; background:url('{image_url}') center/cover; filter:blur(18px); opacity:0.35; z-index:0; }}
+          #bg-wrap {{ z-index:1; }}
+          #overlay {{ position:absolute; bottom:0; left:0; right:0; padding:50px 20px 14px; background:linear-gradient(transparent,rgba(0,0,0,0.88)); color:white; z-index:2; }}
+          #title {{ font-size:20px; font-weight:bold; margin-bottom:4px; }}
+          #artist {{ font-size:12px; opacity:0.75; margin-bottom:8px; }}
+          #desc {{ font-size:13px; opacity:0.85; line-height:1.7; }}
           </style>
           </head>
           <body>
-          <img id="bg" src="{image_url}">
-          <div id="date">{date_display}</div>
+          <div id="bg-blur"></div>
+          <div id="bg-wrap"><img src="{image_url}"></div>
           <div id="overlay">
-            <div id="title">{title}</div>
+            <div id="title">{title_ja}</div>
             <div id="artist">{artist}</div>
             <div id="desc">{desc_ja}</div>
           </div>
           </body>
           </html>"""
-
-          with open('index.html', 'w', encoding='utf-8') as f:
-              f.write(html)
-          print(f"完了: {title}")
-          EOF
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add index.html
-          git diff --staged --quiet || git commit -m "Update dashboard $(date -u '+%Y-%m-%d')"
-          git push
