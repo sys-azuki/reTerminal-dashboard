@@ -1,4 +1,59 @@
-# Step3: MyMemory APIで日本語翻訳（タイトルも）
+name: Update Dashboard
+
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 毎日22:00 UTC = 翌7:00 JST
+  workflow_dispatch:       # 手動実行ボタンも有効
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Wikimedia and generate HTML
+        run: |
+          python3 << 'EOF'
+          import urllib.request
+          import json
+          import datetime
+          import urllib.parse
+
+          # 今日の日付（UTC）
+          today = datetime.datetime.utcnow()
+          date_path = today.strftime('%Y/%m/%d')
+          date_display = today.strftime('%Y.%m.%d')
+
+          # Step1: POTDのファイル名取得
+          date_wiki = today.strftime('%Y-%m-%d')
+          url1 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&prop=images&titles=Template:POTD_protected/{date_wiki}&origin=*"
+          req = urllib.request.Request(url1, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+          with urllib.request.urlopen(req) as r:
+              data1 = json.loads(r.read())
+          filename = data1['query']['pages'][0]['images'][0]['title']
+
+          # Step2: 画像URL・メタデータ取得
+          url2 = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=imageinfo&iiprop=url%7Cextmetadata&titles={urllib.parse.quote(filename)}&origin=*"
+          req2 = urllib.request.Request(url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
+          with urllib.request.urlopen(req2) as r:
+              data2 = json.loads(r.read())
+          page = list(data2['query']['pages'].values())[0]
+          info = page['imageinfo'][0]
+          meta = info.get('extmetadata', {})
+
+          image_url = info['url']
+          title = meta.get('ObjectName', {}).get('value', filename.replace('File:','').rsplit('.',1)[0])
+          artist = meta.get('Artist', {}).get('value', '')
+          # HTMLタグ除去
+          import re
+          artist = re.sub('<[^>]+>', '', artist).strip()
+          desc_en = meta.get('ImageDescription', {}).get('value', '')
+          desc_en = re.sub('<[^>]+>', '', desc_en).strip()
+
+          # Step3: MyMemory APIで日本語翻訳（タイトルも）
           desc_ja = desc_en
           if desc_en:
               trans_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(desc_en)}&langpair=en|ja"
@@ -49,3 +104,16 @@
           </div>
           </body>
           </html>"""
+
+          with open('index.html', 'w', encoding='utf-8') as f:
+              f.write(html)
+          print(f"完了: {title}")
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add index.html
+          git diff --staged --quiet || git commit -m "Update dashboard $(date -u '+%Y-%m-%d')"
+          git push
