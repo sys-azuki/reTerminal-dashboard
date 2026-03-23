@@ -105,8 +105,8 @@ body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family
 #title {{ font-size:20px; font-weight:bold; margin-bottom:4px; }}
 #artist {{ font-size:12px; opacity:0.75; margin-bottom:6px; }}
 #desc {{ font-size:13px; opacity:0.85; line-height:1.7; margin-bottom:6px; }}
-#trivia-label {{ font-size:10px; opacity:0.5; margin-bottom:2px; letter-spacing:0.08em; }}
-#trivia {{ font-size:11px; opacity:0.6; line-height:1.6; border-top:0.5px solid rgba(255,255,255,0.3); padding-top:6px; margin-top:4px; }}
+#trivia-label {{ font-size:10px; opacity:1; margin-bottom:2px; letter-spacing:0.08em; }}
+#trivia {{ font-size:11px; opacity:1; line-height:1.6; border-top:0.5px solid rgba(255,255,255,0.8); padding-top:6px; margin-top:4px; }}
 </style>
 </head>
 <body>
