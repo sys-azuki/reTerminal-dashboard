@@ -56,7 +56,7 @@ jobs:
           # Step3: MyMemory APIで日本語翻訳（タイトルも）
           desc_ja = desc_en
           if desc_en:
-              trans_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(desc_en)}&langpair=en|ja"
+              trans_url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(desc_en)}&langpair=autodetect|ja"
               try:
                   req3 = urllib.request.Request(trans_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
                   with urllib.request.urlopen(req3, timeout=10) as r:
@@ -68,7 +68,7 @@ jobs:
           title_ja = title
           if title:
               try:
-                  trans_url2 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(title)}&langpair=en|ja"
+                  trans_url2 = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(title)}&langpair=autodetect|ja"
                   req4 = urllib.request.Request(trans_url2, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
                   with urllib.request.urlopen(req4, timeout=10) as r:
                       trans_data2 = json.loads(r.read())
