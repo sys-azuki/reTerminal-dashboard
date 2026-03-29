@@ -72,7 +72,7 @@ try:
 except:
     trivia = ''
 
-trivia_block = f'<div id="trivia-label">豆知識</div><div id="trivia">{trivia}</div>' if trivia else ''
+trivia_block = f'<div id="trivia">{trivia}</div>' if trivia else ''
 
 # Step4: HTML生成
 html = f"""<!DOCTYPE html>
@@ -88,8 +88,7 @@ body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family
 #overlay {{ position:absolute; bottom:0; left:0; right:0; padding:50px 20px 14px; background:linear-gradient(transparent,rgba(0,0,0,0.88)); color:white; z-index:2; }}
 #title {{ font-size:20px; font-weight:bold; margin-bottom:4px; }}
 #desc {{ font-size:13px; opacity:0.85; line-height:1.7; margin-bottom:6px; }}
-#trivia-label {{ font-size:10px; opacity:1; margin-bottom:2px; letter-spacing:0.08em; }}
-#trivia {{ font-size:11px; opacity:1; line-height:1.6; border-top:0.5px solid rgba(255,255,255,0.8); padding-top:6px; margin-top:4px; }}
+#trivia {{ font-size:13px; opacity:1; line-height:1.6; border-top:0.5px solid rgba(255,255,255,0.8); padding-top:6px; margin-top:4px; }}
 </style>
 </head>
 <body>
