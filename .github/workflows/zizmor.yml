@@ -1,0 +1,31 @@
+name: Actions Security Audit (zizmor)
+
+# GitHub Actions ワークフローの静的セキュリティ監査。
+# zizmor は新しい攻撃手法に応じて監査ルールが増えるため、常に最新版を uvx で取得することで
+# 「新しい防御策を自動的に取り込む」効果がある。github-hosted(ubuntu)で実行し self-hosted は使わない。
+# High 重大度の検出(template injection / unpinned action / dangerous trigger 等)で失敗する。
+
+on:
+  push:
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  schedule:
+    - cron: '0 0 * * 1' # 毎週月曜 09:00 JST: 新しい zizmor ルールでの定期再監査
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Run zizmor
+        run: uvx zizmor --offline --min-severity=high .github/workflows/
