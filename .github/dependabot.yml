@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # GitHub Actions を SHA 固定したまま自動で最新へ追随する。
+  # dependabot は固定SHAとバージョンコメントの両方を更新するため、固定と自動更新を両立できる。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build(deps)"
