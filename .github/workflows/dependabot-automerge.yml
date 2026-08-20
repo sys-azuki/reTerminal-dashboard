@@ -31,6 +31,7 @@ permissions:
   # (実測: chrome-todo #1 は CI が緑なのに「チェックを 1 件も取得できない」で止まった)。
   checks: read
   statuses: read
+  actions: write # マージ後に検証系ワークフローを workflow_dispatch で起こすため
 
 jobs:
   automerge:
@@ -42,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Merge if every check is green
+        id: merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # checkout していないので gh は git からリポジトリを推定できない。
@@ -133,4 +135,25 @@ jobs:
             echo "$out"
             exit 0
           fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
           echo "#$NUMBER をマージした"
+
+      # 【GITHUB_TOKEN のマージは push イベントを起こさない】ので、このマージでは main の
+      # ワークフローが 1 本も走らない（実測: chrome-todo の 65b5a736 は check-runs が 0 件だった）。
+      # pull_request の CI は base+head のマージコミットを検査しているため取り込む内容自体は
+      # 検証済みだが、それだけだと ops/watchdog.yml の「壊れたら通知」の網がマージ後に効かない。
+      # workflow_dispatch は例外的に GITHUB_TOKEN でも run を作るので、検証系だけ明示的に起こす。
+      #
+      # 【ここに deploy 系を足さないこと】顧客環境への配信が自動で走ってしまう。
+      # semgrep も入れない（常に exit 0 の警告のみ＝失敗しないので watchdog の材料にならない）。
+      - name: Run verification workflows on main
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }} # Merge step と同じ理由
+        run: |
+          set -euo pipefail
+          for wf in zizmor.yml; do
+            gh workflow run "$wf" --ref main \
+              || echo "::notice::$wf の起動に失敗した。マージ自体は成功している"
+          done
