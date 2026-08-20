@@ -124,5 +124,13 @@ jobs:
           # --match-head-commit で「チェックが通ったのと同じコミット」以外へのマージを拒否する。
           # チェック完了後に dependabot が追加 push（rebase 等）していた場合、未検証の HEAD を
           # 取り込まずにここで失敗する。--auto は使わない（上のコメント参照）。
-          gh pr merge "$NUMBER" --squash --match-head-commit "$SHA"
+          # マージ自体の失敗（他の PR が先に入ったことによる競合、チェック完了後の
+          # 追加 push など）でこの run を赤くしない。赤くすると ops/watchdog.yml が
+          # [watchdog] issue を立ててしまい、人が見るべきものだけを通知する原則が崩れる。
+          # dependabot は base が動けば自動で rebase するので、次の緑で再試行される。
+          if ! out=$(gh pr merge "$NUMBER" --squash --match-head-commit "$SHA" 2>&1); then
+            echo "::notice::#$NUMBER のマージに失敗した（競合か HEAD の変化）。rebase 後に再試行される"
+            echo "$out"
+            exit 0
+          fi
           echo "#$NUMBER をマージした"
