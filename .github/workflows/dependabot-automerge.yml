@@ -69,15 +69,41 @@ jobs:
             exit 0
           fi
 
-          # gh pr checks は赤や未完了があると非ゼロ終了するが JSON は出す。
-          checks=$(gh pr checks "$NUMBER" --json name,bucket,workflow 2>/dev/null || true)
-          # 自分自身（workflow_run 起動）はチェックに出ないが、将来出た場合に自分の完了を
-          # 待って永久に止まらないよう名前で除外しておく。
-          checks=$(jq '[.[] | select(.workflow != "Dependabot auto-merge")]' <<<"${checks:-[]}")
+          # チェックの取得は REST の check-runs を直接読む。`gh pr checks` は gh の版で
+          # 使える --json フィールドが変わるうえ、失敗しても JSON を出さずに終わるため、
+          # 「エラー」と「チェックが 0 件」を区別できない（実測: chrome-todo #1 で
+          # 権限を足した後も 0 件のままだった）。API なら生の応答をログに残せる。
+          #
+          # チェックの登録は run の完了からわずかに遅れることがあるので数回だけ待つ。
+          checks=""
+          for attempt in 1 2 3; do
+            if checks=$(gh api "repos/$GH_REPO/commits/$SHA/check-runs" \
+                          --jq '[.check_runs[] | {name, status, conclusion}]'); then
+              n=$(jq 'length' <<<"$checks")
+              if [ "$n" -gt 0 ]; then break; fi
+              echo "($attempt 回目) チェックがまだ 0 件 -> 10 秒待つ"
+            else
+              echo "($attempt 回目) check-runs の取得に失敗 -> 10 秒待つ"
+              checks=""
+            fi
+            sleep 10
+          done
+
+          if [ -z "$checks" ]; then
+            echo "check-runs API から応答が得られない -> マージしない"
+            exit 0
+          fi
+          echo "取得したチェック: $checks"
+
+          # 自分自身（workflow_run 起動）が将来チェックとして現れても、自分の完了を待って
+          # 永久に止まらないよう名前で除外しておく。
+          checks=$(jq '[.[] | select(.name != "Merge green dependabot PRs")]' <<<"$checks")
 
           total=$(jq 'length' <<<"$checks")
-          pending=$(jq '[.[] | select(.bucket == "pending")] | length' <<<"$checks")
-          broken=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<<"$checks")
+          pending=$(jq '[.[] | select(.status != "completed")] | length' <<<"$checks")
+          broken=$(jq '[.[] | select(.status == "completed")
+                            | select(.conclusion != "success" and .conclusion != "neutral"
+                                     and .conclusion != "skipped")] | length' <<<"$checks")
           echo "#$NUMBER $TITLE -> チェック $total 件 / 未完了 $pending / 赤 $broken"
 
           # チェックが 1 件も取れないのは「全部緑」ではなく「確認できていない」。
