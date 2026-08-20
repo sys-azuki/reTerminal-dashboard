@@ -26,6 +26,11 @@ on: # zizmor: ignore[dangerous-triggers]
 permissions:
   contents: write
   pull-requests: write
+  # gh pr checks は statusCheckRollup を読む。permissions を明示すると未指定のスコープは
+  # none になるので、これが無いとチェックが 0 件に見えて永久にマージされない
+  # (実測: chrome-todo #1 は CI が緑なのに「チェックを 1 件も取得できない」で止まった)。
+  checks: read
+  statuses: read
 
 jobs:
   automerge:
