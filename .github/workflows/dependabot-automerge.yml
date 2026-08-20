@@ -1,0 +1,97 @@
+name: Dependabot auto-merge
+
+# dependabot の PR を、その PR に付いた全チェックが緑になった時点で squash マージする。
+#
+# 【なぜ要るか】PR を人がさばかない運用にしている。放置すると更新が溜まる一方で、しかも
+# 「開いたまま」は安全側ではない。2026-08-21 時点で org 全体に 16 本が滞留し、うち
+# chrome-todo の 4 本は high 深刻度の脆弱性修正だった（nanoid / postcss / rollup / vite）。
+#
+# 【なぜ workflow_run 起動か】pull_request 起動ではチェックが終わる前に走ってしまう。
+# schedule 起動は private リポの無料枠を食う（毎時 × 10 リポで 2,000 分/月を超える）。
+# チェックの完了イベントで起きるのが、即時かつ安価な唯一の方法。
+#
+# 【なぜ gh pr merge --auto を使わないか】このプランでは Allow auto-merge が使えず、
+# ruleset も 403 で作れない＝ required status checks を設定できない。待つべき gate が
+# 無いので --auto は【即時マージ】に退行する（kintone-plugin #37 で実証済み）。
+# だから緑の確認をこのワークフロー自身で行う。
+#
+# 【zizmor: dangerous-triggers は想定内・レビュー済み】PR のコードを checkout も実行も
+# しない。API でメタデータだけを読み、--match-head-commit で「チェックが通ったのと同一
+# コミット」に限定してマージするので、攻撃者が制御するコードが特権コンテキストで走ることはない。
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ['Actions Security Audit (zizmor)']
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Merge green dependabot PRs
+    # pull_request 起因の完了だけを見る（main への push では動かさない）。
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge if every check is green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # checkout していないので gh は git からリポジトリを推定できない。
+          # GH_REPO を明示しないと `fatal: not a git repository` で全部失敗する。
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # workflow_run.pull_requests は空で来ることがあるので head SHA から引き直す。
+          pr=$(gh api "repos/$GH_REPO/commits/$SHA/pulls" \
+                 --jq '[.[] | select(.state == "open")][0] // empty')
+          if [ -z "$pr" ]; then
+            echo "この SHA に対応する open PR が無い -> 何もしない"
+            exit 0
+          fi
+
+          NUMBER=$(jq -r '.number' <<<"$pr")
+          AUTHOR=$(jq -r '.user.login' <<<"$pr")
+          TITLE=$(jq -r '.title' <<<"$pr")
+
+          # 作成者は event の actor ではなく API から確認する（より確実）。
+          if [ "$AUTHOR" != "dependabot[bot]" ]; then
+            echo "作成者が $AUTHOR で dependabot ではない -> 何もしない"
+            exit 0
+          fi
+
+          # gh pr checks は赤や未完了があると非ゼロ終了するが JSON は出す。
+          checks=$(gh pr checks "$NUMBER" --json name,bucket,workflow 2>/dev/null || true)
+          # 自分自身（workflow_run 起動）はチェックに出ないが、将来出た場合に自分の完了を
+          # 待って永久に止まらないよう名前で除外しておく。
+          checks=$(jq '[.[] | select(.workflow != "Dependabot auto-merge")]' <<<"${checks:-[]}")
+
+          total=$(jq 'length' <<<"$checks")
+          pending=$(jq '[.[] | select(.bucket == "pending")] | length' <<<"$checks")
+          broken=$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<<"$checks")
+          echo "#$NUMBER $TITLE -> チェック $total 件 / 未完了 $pending / 赤 $broken"
+
+          # チェックが 1 件も取れないのは「全部緑」ではなく「確認できていない」。
+          # gh の一時的な失敗で無検証マージに倒れないよう、ここは安全側に止める。
+          if [ "$total" -eq 0 ]; then
+            echo "チェックを 1 件も取得できない -> マージしない"
+            exit 0
+          fi
+          if [ "$pending" -ne 0 ]; then
+            echo "まだ走っているチェックがある -> 最後の 1 本が終わった時に再度起動される"
+            exit 0
+          fi
+          if [ "$broken" -ne 0 ]; then
+            echo "赤いチェックがある -> マージしない"
+            exit 0
+          fi
+
+          # --match-head-commit で「チェックが通ったのと同じコミット」以外へのマージを拒否する。
+          # チェック完了後に dependabot が追加 push（rebase 等）していた場合、未検証の HEAD を
+          # 取り込まずにここで失敗する。--auto は使わない（上のコメント参照）。
+          gh pr merge "$NUMBER" --squash --match-head-commit "$SHA"
+          echo "#$NUMBER をマージした"
