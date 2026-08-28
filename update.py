@@ -19,6 +19,8 @@ html = data.get('parse', {}).get('text', {}).get('*', '')
 
 # 今日の一枚セクションを切り出す
 idx = html.find('今日の一枚')
+if idx == -1:
+    raise SystemExit('「今日の一枚」セクションが見つかりません')
 section = html[idx:idx+3000]
 
 # ファイル名取得（ファイル: リンク）
