@@ -4,6 +4,8 @@ import json
 import datetime
 import urllib.parse
 import re
+# `html` はこのファイルで変数名として使っているので、モジュールごとの import はできない
+from html import escape
 
 today = datetime.datetime.now()
 y = today.strftime('%Y')
@@ -77,7 +79,7 @@ try:
 except:
     trivia = ''
 
-trivia_block = f'<div id="trivia">{trivia}</div>' if trivia else ''
+trivia_block = f'<div id="trivia">{escape(trivia)}</div>' if trivia else ''
 
 # Step4: HTML生成
 html = f"""<!DOCTYPE html>
