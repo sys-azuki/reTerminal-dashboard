@@ -7,6 +7,11 @@ name: Actions Security Audit (zizmor)
 
 on:
   push:
+    # branches を絞らないと PR ブランチへの push でも走り、同じ SHA に対して
+    # push 起因と pull_request 起因の 2 本の run ができる。dependabot-automerge.yml は
+    # workflow_run.event == 'pull_request' の完了しか見ないので、後に終わったのが
+    # push 起因の方だとマージが再試行されないまま PR が残る。
+    branches: [main]
     paths:
       - '.github/workflows/**'
   pull_request:
