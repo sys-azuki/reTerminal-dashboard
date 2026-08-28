@@ -53,6 +53,9 @@ if file_name:
 
 print(f"画像URL: {image_url}")
 
+if not image_url:
+    raise SystemExit('画像URLを取得できませんでした')
+
 # Step3: 日本語Wikipediaで豆知識を取得
 trivia = ''
 try:
