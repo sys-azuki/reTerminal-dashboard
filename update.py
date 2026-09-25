@@ -51,7 +51,9 @@ if file_name:
     with urllib.request.urlopen(req2, timeout=10) as r:
         info = json.loads(r.read())
     page_info = list(info['query']['pages'].values())[0]
-    image_url = page_info.get('imageinfo', [{}])[0].get('url', '')
+    # imageinfo は「キーが無い」場合と「空配列で返る」場合の両方がある。
+    # 後者は既定値 [{}] が使われないため [0] が IndexError になる。
+    image_url = (page_info.get('imageinfo') or [{}])[0].get('url', '')
 
 print(f"画像URL: {image_url}")
 
