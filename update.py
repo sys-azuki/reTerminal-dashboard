@@ -40,6 +40,9 @@ if caption_match:
 else:
     desc_ja = title_ja
 
+# タイトルと同一文なら 800x480 に同じ行を 2 回出すだけなので本文側は省く
+desc_block = f'<div id="desc">{desc_ja}</div>' if desc_ja and desc_ja != title_ja else ''
+
 print(f"タイトル: {title_ja}")
 print(f"ファイル名: {file_name}")
 
@@ -105,7 +108,7 @@ body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family
 <div id="bg-wrap"><img src="{image_url}"></div>
 <div id="overlay">
   <div id="title">{title_ja}</div>
-  <div id="desc">{desc_ja}</div>
+  {desc_block}
   {trivia_block}
 </div>
 </body>
