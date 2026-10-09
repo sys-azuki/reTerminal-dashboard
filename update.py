@@ -5,7 +5,7 @@ import datetime
 import urllib.parse
 import re
 # `html` はこのファイルで変数名として使っているので、モジュールごとの import はできない
-from html import escape
+from html import escape, unescape
 
 today = datetime.datetime.now()
 y = today.strftime('%Y')
@@ -31,17 +31,19 @@ file_name = urllib.parse.unquote(file_match.group(1)).replace('ファイル:', '
 
 # 日本語タイトル/説明: mw-file-description の title 属性
 title_match = re.search(r'class="mw-file-description"[^>]*title="([^"]+)"', section)
-title_ja = title_match.group(1) if title_match else file_name.rsplit('.', 1)[0].replace('_', ' ')
+# 属性値は文字参照（&amp; / &quot; など）のまま取れる。ファイル名から作る側は素の文字列なので、
+# ここで素の文字列にそろえ、HTML へ埋め込むときにまとめてエスケープする。
+title_ja = unescape(title_match.group(1)) if title_match else file_name.rsplit('.', 1)[0].replace('_', ' ')
 
 # 本文中のキャプション（画像直下テキスト）
 caption_match = re.search(r'</(?:img|span)></a><br\s*/>(.+?)</div>', section, re.DOTALL)
 if caption_match:
-    desc_ja = re.sub('<[^>]+>', '', caption_match.group(1)).strip()
+    desc_ja = unescape(re.sub('<[^>]+>', '', caption_match.group(1))).strip()
 else:
     desc_ja = title_ja
 
 # タイトルと同一文なら 800x480 に同じ行を 2 回出すだけなので本文側は省く
-desc_block = f'<div id="desc">{desc_ja}</div>' if desc_ja and desc_ja != title_ja else ''
+desc_block = f'<div id="desc">{escape(desc_ja)}</div>' if desc_ja and desc_ja != title_ja else ''
 
 print(f"タイトル: {title_ja}")
 print(f"ファイル名: {file_name}")
@@ -107,7 +109,7 @@ body {{ width:800px; height:480px; overflow:hidden; background:#111; font-family
 <div id="bg-blur"></div>
 <div id="bg-wrap"><img src="{image_url}"></div>
 <div id="overlay">
-  <div id="title">{title_ja}</div>
+  <div id="title">{escape(title_ja)}</div>
   {desc_block}
   {trivia_block}
 </div>
