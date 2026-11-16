@@ -6,6 +6,27 @@ import urllib.parse
 import re
 # `html` はこのファイルで変数名として使っているので、モジュールごとの import はできない
 from html import escape, unescape
+import time
+import urllib.error
+
+UA = 'reTerminal-Dashboard/1.0 (github-actions)'
+
+
+def fetch_json(url, timeout=10, tries=4):
+    """Wikipedia API は共有 IP（GitHub の runner）からだと 429 を返すことがある。
+    Retry-After（無ければ 5・10・20 秒）だけ待って取り直す。"""
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or i == tries - 1:
+                raise
+            ra = e.headers.get('Retry-After', '')
+            wait = min(int(ra), 120) if ra.isdigit() else 5 * 2 ** i
+            print(f'HTTP {e.code}: {wait} 秒待って取り直す ({i + 1}/{tries - 1})')
+            time.sleep(wait)
 
 today = datetime.datetime.now()
 y = today.strftime('%Y')
@@ -14,9 +35,7 @@ d = today.strftime('%d')
 
 # Step1: 日本語版Wikipediaメインページから今日の一枚を取得
 url1 = 'https://ja.wikipedia.org/w/api.php?action=parse&page=%E3%83%A1%E3%82%A4%E3%83%B3%E3%83%9A%E3%83%BC%E3%82%B8&prop=text&format=json'
-req = urllib.request.Request(url1, headers={'User-Agent': 'reTerminal-Dashboard/1.0 (github-actions)'})
-with urllib.request.urlopen(req, timeout=15) as r:
-    data = json.loads(r.read())
+data = fetch_json(url1, timeout=15)
 html = data.get('parse', {}).get('text', {}).get('*', '')
 
 # 今日の一枚セクションを切り出す
@@ -52,9 +71,7 @@ print(f"ファイル名: {file_name}")
 image_url = ''
 if file_name:
     info_url = f'https://ja.wikipedia.org/w/api.php?action=query&titles=File:{urllib.parse.quote(file_name)}&prop=imageinfo&iiprop=url&format=json'
-    req2 = urllib.request.Request(info_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-    with urllib.request.urlopen(req2, timeout=10) as r:
-        info = json.loads(r.read())
+    info = fetch_json(info_url)
     page_info = list(info['query']['pages'].values())[0]
     # imageinfo は「キーが無い」場合と「空配列で返る」場合の両方がある。
     # 後者は既定値 [{}] が使われないため [0] が IndexError になる。
@@ -70,16 +87,12 @@ trivia = ''
 try:
     search_q = title_ja.split('、')[0].split('の')[0]  # 最初のキーワードで検索
     search_url = f'https://ja.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch={urllib.parse.quote(search_q)}&srlimit=1&origin=*'
-    req_s = urllib.request.Request(search_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-    with urllib.request.urlopen(req_s, timeout=10) as r:
-        search_data = json.loads(r.read())
+    search_data = fetch_json(search_url)
     results = search_data.get('query', {}).get('search', [])
     if results:
         found_title = results[0]['title']
         ext_url = f'https://ja.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=true&explaintext=true&redirects=1&titles={urllib.parse.quote(found_title)}&origin=*'
-        req_e = urllib.request.Request(ext_url, headers={'User-Agent': 'reTerminal-Dashboard/1.0'})
-        with urllib.request.urlopen(req_e, timeout=10) as r:
-            ext_data = json.loads(r.read())
+        ext_data = fetch_json(ext_url)
         wiki_page = list(ext_data['query']['pages'].values())[0]
         extract = wiki_page.get('extract', '')
         trivia = extract[:300].strip() if extract else ''
