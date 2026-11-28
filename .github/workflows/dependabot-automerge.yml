@@ -1,26 +1,26 @@
 name: Dependabot auto-merge
 
-# dependabot の PR を、その PR に付いた全チェックが緑になった時点で squash マージする。
+# dependabot・Renovate の PR を、その PR に付いた全チェックが緑になった時点で squash マージする。
 #
 # 【なぜ要るか】PR を人がさばかない運用にしている。放置すると更新が溜まる一方で、しかも
-# 「開いたまま」は安全側ではない。2026-08-21 時点で org 全体に 16 本が滞留し、うち
-# chrome-todo の 4 本は high 深刻度の脆弱性修正だった（nanoid / postcss / rollup / vite）。
+# 「開いたまま」は安全側ではない（滞留する中に脆弱性修正も混じる）。
 #
 # 【なぜ workflow_run 起動か】pull_request 起動ではチェックが終わる前に走ってしまう。
-# schedule 起動は private リポの無料枠を食う（毎時 × 10 リポで 2,000 分/月を超える）。
-# チェックの完了イベントで起きるのが、即時かつ安価な唯一の方法。
+# PR で走るワークフローの完了ごとに起き、最後の 1 本が終わったときに全部緑ならマージする。
 #
 # 【なぜ gh pr merge --auto を使わないか】このプランでは Allow auto-merge が使えず、
 # ruleset も 403 で作れない＝ required status checks を設定できない。待つべき gate が
-# 無いので --auto は【即時マージ】に退行する（kintone-plugin #37 で実証済み）。
+# 無いので --auto は【即時マージ】に退行する。
 # だから緑の確認をこのワークフロー自身で行う。
 #
 # 【zizmor: dangerous-triggers は想定内・レビュー済み】PR のコードを checkout も実行も
 # しない。API でメタデータだけを読み、--match-head-commit で「チェックが通ったのと同一
 # コミット」に限定してマージするので、攻撃者が制御するコードが特権コンテキストで走ることはない。
 on: # zizmor: ignore[dangerous-triggers]
-  workflow_run:
-    workflows: ['Actions Security Audit (zizmor)']
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    # PR で走るワークフローの name: をすべて並べる（最後に終わるチェックの完了で起きるため）
+    workflows:
+      - 'Actions Security Audit (zizmor)'
     types: [completed]
 
 permissions:
@@ -36,11 +36,20 @@ permissions:
 jobs:
   automerge:
     name: Merge green dependabot PRs
-    # pull_request 起因の完了だけを見る（main への push では動かさない）。
+    # workflow_run は pull_request 起因の完了だけを見る（main への push では動かさない）。
+    # HOSTED_RUNNER がある間はマージしない。解除後に残った必須チェックの skipped は下で再実行する。
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+      !vars.HOSTED_RUNNER && (
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success')
+      )
+    # if を通った起動だけを同じ head SHA で直列にし、待っている有効な起動を最新の 1 つだけ残す。
+    concurrency:
+      group: dependabot-automerge-${{ github.event.workflow_run.head_sha || github.run_id }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # 既定の 360 分だと、止まったときに runner を 6 時間ふさぐ
     steps:
       - name: Merge if every check is green
         id: merge
@@ -49,16 +58,23 @@ jobs:
           # checkout していないので gh は git からリポジトリを推定できない。
           # GH_REPO を明示しないと `fatal: not a git repository` で全部失敗する。
           GH_REPO: ${{ github.repository }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
+          REQUIRED_CHECKS: "[]"
         run: |
           set -euo pipefail
 
+          MERGED=""
+          # 1 つの PR（head の SHA）を見て、緑ならマージする。止めるときは return 0
+          try_merge() {
+          local SHA=$1 pr NUMBER AUTHOR TITLE checks n attempt total pending broken skipped out
+          local unready skipped_runs run_id run_api run
           # workflow_run.pull_requests は空で来ることがあるので head SHA から引き直す。
           pr=$(gh api "repos/$GH_REPO/commits/$SHA/pulls" \
-                 --jq '[.[] | select(.state == "open")][0] // empty')
+                 --jq '[.[] | select(.state == "open")][0] // empty') \
+            || { echo "$SHA の PR の取得に失敗 -> 何もしない"; return 0; }
           if [ -z "$pr" ]; then
-            echo "この SHA に対応する open PR が無い -> 何もしない"
-            exit 0
+            echo "$SHA に対応する open PR が無い -> 何もしない"
+            return 0
           fi
 
           NUMBER=$(jq -r '.number' <<<"$pr")
@@ -66,21 +82,96 @@ jobs:
           TITLE=$(jq -r '.title' <<<"$pr")
 
           # 作成者は event の actor ではなく API から確認する（より確実）。
-          if [ "$AUTHOR" != "dependabot[bot]" ]; then
-            echo "作成者が $AUTHOR で dependabot ではない -> 何もしない"
-            exit 0
+          if [ "$AUTHOR" != "dependabot[bot]" ] && [ "$AUTHOR" != "renovate[bot]" ]; then
+            echo "作成者が $AUTHOR で dependabot・renovate ではない -> 何もしない"
+            return 0
+          fi
+
+          pr_is_small() {
+            jq -e '
+              def trim: gsub("\\A\\s+|\\s+\\z"; "");
+              def digest: test("^[0-9a-f]{7,40}$"; "i");
+              def version_numbers: [scan("[0-9]+")] | .[:2];
+              def change_is_small($old; $new):
+                if ($old | digest) and ($new | digest) then true
+                else
+                  ($old | version_numbers) as $a
+                  | ($new | version_numbers) as $b
+                  | ($a | length) > 0 and $a[0] == $b[0]
+                    and ($a[0] != "0" or $a[1] == $b[1])
+                end;
+
+              def from_to:
+                "(?:[0-9a-f]{7,40}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][\\w.+-]+)?)" as $version
+                | [capture("\\bfrom\\s+`?(?<old>" + $version + ")`?\\s+to\\s+`?(?<new>"
+                           + $version + ")`?(?=\\s|\\z|\\.(?=\\s|\\z))"; "ig")];
+              def dependabot_is_small($title; $body):
+                # リリースノートやコメントを除いてから、概要と依存ごとの更新行を読む。
+                ($body | gsub("<details\\b[\\s\\S]*?</details\\s*>|<!--[\\s\\S]*?-->"; "i")
+                       | trim | split("\n")) as $lines
+                | [$lines[] | select(test("^Updates\\s"; "i")) | from_to] as $updates
+                | [$title, ($lines[0] // "")] as $headings
+                | [$headings[] | capture("\\bgroup\\b.*?\\bwith\\s+(?<count>[0-9]+)\\s+updates?\\b"; "i")
+                               | .count | tonumber] as $counts
+                | ([$headings[] | from_to[]] + [$updates[][]]) as $changes
+                | all($counts[]; . == ($updates | length))
+                  and all($updates[]; length > 0)
+                  and ($changes | length) > 0
+                  and all($changes[]; change_is_small(.old; .new));
+
+              def cells:
+                trim | gsub("^\\||\\|$"; "") | split("(?<!\\\\)\\|"; "") | map(trim);
+              def change_cell_is_small:
+                gsub("\\]\\(.*?\\)$"; "]")
+                | if startswith("[") and endswith("]") then .[1:-1] else . end
+                | any(capture("^`(?<old>[^`]+)`\\s*(?:→|->)\\s*`(?<new>[^`]+)`$");
+                      change_is_small((.old | trim); (.new | trim)));
+              def table_is_small:
+                .[0] as $columns
+                | ($columns | map(ascii_downcase) | indices(["change"])) as $change
+                | ($change | length) == 1
+                  and length >= 3
+                  and (.[1] | length) == ($columns | length)
+                  and all(.[1][]; test("^:?-+:?$"))
+                  and all(.[2:][];
+                    length == ($columns | length)
+                    and (.[$change[0]] | change_cell_is_small));
+              def renovate_is_small($title; $body; $labels):
+                ($title | test("\\(major\\)|\\bto v[0-9]+\\b(?![.\\w-])"; "i") | not)
+                and all($labels[]; .name | test("major$"; "i") | not)
+                and (
+                  $body | split("(?:\\A|(?<=\n))(?:---|### Release Notes)[[:blank:]\\r]*(?=\n|\\z)"; "i") | .[0]
+                  # 表の Change 列を全行読む。Update 列があっても版の組で判定する。
+                  | [scan("(?:\\A|(?<=\n))[[:blank:]]*\\|[^\n]*(?:\n[[:blank:]]*\\|[^\n]*)*")
+                     | split("\n") | map(cells)
+                     | select(.[0] | map(ascii_downcase) | any(. == "package" or . == "change"))]
+                  | length > 0 and all(.[]; table_is_small)
+                );
+
+              (.body // "") as $body
+              | if .user.login == "dependabot[bot]" then dependabot_is_small(.title; $body)
+                else renovate_is_small(.title; $body; .labels // [])
+                end
+            ' <<<"$1" >/dev/null
+          }
+
+          # 人が見る更新は run を赤くせず、watchdog の失敗通知を増やさない。
+          if ! pr_is_small "$pr"; then
+            echo "major 更新を含むか、版を読めない -> マージしない（人が見る）"
+            return 0
           fi
 
           # チェックの取得は REST の check-runs を直接読む。`gh pr checks` は gh の版で
           # 使える --json フィールドが変わるうえ、失敗しても JSON を出さずに終わるため、
-          # 「エラー」と「チェックが 0 件」を区別できない（実測: chrome-todo #1 で
-          # 権限を足した後も 0 件のままだった）。API なら生の応答をログに残せる。
+          # 「エラー」と「チェックが 0 件」を区別できない。API なら生の応答をログに残せる。
           #
           # チェックの登録は run の完了からわずかに遅れることがあるので数回だけ待つ。
           checks=""
           for attempt in 1 2 3; do
-            if checks=$(gh api "repos/$GH_REPO/commits/$SHA/check-runs" \
-                          --jq '[.check_runs[] | {name, status, conclusion}]'); then
+            # 既定は 30 件だけ。--paginate はページごとに配列を出すので jq -s で 1 つにまとめる
+            # 既定の filter=latest で、再実行前の古い結果を判定に持ち越さない。
+            if checks=$(gh api --paginate "repos/$GH_REPO/commits/$SHA/check-runs?per_page=100" \
+                          --jq '[.check_runs[] | {name, status, conclusion, details_url}]' | jq -cs 'add // []'); then
               n=$(jq 'length' <<<"$checks")
               if [ "$n" -gt 0 ]; then break; fi
               echo "($attempt 回目) チェックがまだ 0 件 -> 10 秒待つ"
@@ -93,7 +184,7 @@ jobs:
 
           if [ -z "$checks" ]; then
             echo "check-runs API から応答が得られない -> マージしない"
-            exit 0
+            return 0
           fi
           echo "取得したチェック: $checks"
 
@@ -106,21 +197,58 @@ jobs:
           broken=$(jq '[.[] | select(.status == "completed")
                             | select(.conclusion != "success" and .conclusion != "neutral"
                                      and .conclusion != "skipped")] | length' <<<"$checks")
-          echo "#$NUMBER $TITLE -> チェック $total 件 / 未完了 $pending / 赤 $broken"
+          skipped=$(jq '[.[] | select(.status == "completed" and .conclusion == "skipped")] | length' <<<"$checks")
+          echo "#$NUMBER $TITLE -> チェック $total 件 / 未完了 $pending / 赤 $broken / 飛ばした $skipped"
 
           # チェックが 1 件も取れないのは「全部緑」ではなく「確認できていない」。
           # gh の一時的な失敗で無検証マージに倒れないよう、ここは安全側に止める。
           if [ "$total" -eq 0 ]; then
             echo "チェックを 1 件も取得できない -> マージしない"
-            exit 0
+            return 0
+          fi
+          unready=$(jq -c --argjson required "$REQUIRED_CHECKS" '
+            . as $checks
+            | [$required[] as $name
+               | [$checks[] | select(.name == $name)] as $matches
+               | select(($matches | length) == 0
+                        or any($matches[]; .status != "completed" or .conclusion != "success"))
+               | $name]
+          ' <<<"$checks")
+          if [ "$unready" != '[]' ]; then
+            echo "#$NUMBER の成功を確認できない必須チェック: $unready -> マージしない"
+            # 同じ run のジョブが複数 skipped でも、run ごとに 1 回だけ再実行を頼む。
+            skipped_runs=$(jq -r --argjson required "$REQUIRED_CHECKS" --arg prefix "$GITHUB_SERVER_URL/$GH_REPO/actions/runs/" '
+              [.[] | select(.status == "completed" and .conclusion == "skipped")
+                   | select(.name as $name | $required | index($name))
+                   | (.details_url // "")
+                   | select(startswith($prefix)) | ltrimstr($prefix)
+                   | capture("^(?<id>[0-9]+)/job/[0-9]+(?:[?#].*)?$").id]
+              | unique[]
+            ' <<<"$checks")
+            # GITHUB_TOKEN による再実行の完了で workflow_run が起きる保証はない。bot の rebase か次のチェック完了で見直す。
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              run_api="repos/$GH_REPO/actions/runs/$run_id"
+              if ! run=$(gh api "$run_api" --jq '{head_sha, event, status, run_attempt}'); then
+                echo "::notice::run $run_id の取得に失敗した"
+                continue
+              fi
+              if jq -e --arg sha "$SHA" '
+                .head_sha == $sha and .event == "pull_request" and .status == "completed" and .run_attempt == 1
+              ' <<<"$run" >/dev/null; then
+                gh api -X POST "$run_api/rerun" \
+                  || echo "::notice::run $run_id の再実行に失敗した"
+              fi
+            done <<<"$skipped_runs"
+            return 0
           fi
           if [ "$pending" -ne 0 ]; then
-            echo "まだ走っているチェックがある -> 最後の 1 本が終わった時に再度起動される"
-            exit 0
+            echo "まだ走っているチェックがある -> そのワークフローの完了（on: に並べたもの）で見直す"
+            return 0
           fi
           if [ "$broken" -ne 0 ]; then
             echo "赤いチェックがある -> マージしない"
-            exit 0
+            return 0
           fi
 
           # --match-head-commit で「チェックが通ったのと同じコミット」以外へのマージを拒否する。
@@ -133,13 +261,17 @@ jobs:
           if ! out=$(gh pr merge "$NUMBER" --squash --match-head-commit "$SHA" 2>&1); then
             echo "::notice::#$NUMBER のマージに失敗した（競合か HEAD の変化）。rebase 後に再試行される"
             echo "$out"
-            exit 0
+            return 0
           fi
-          echo "merged=true" >> "$GITHUB_OUTPUT"
+          MERGED=true
           echo "#$NUMBER をマージした"
+          }
+
+          if [ -n "$EVENT_SHA" ]; then try_merge "$EVENT_SHA"; fi
+          if [ -n "$MERGED" ]; then echo "merged=true" >> "$GITHUB_OUTPUT"; fi
 
       # 【GITHUB_TOKEN のマージは push イベントを起こさない】ので、このマージでは main の
-      # ワークフローが 1 本も走らない（実測: chrome-todo の 65b5a736 は check-runs が 0 件だった）。
+      # ワークフローが 1 本も走らない。
       # pull_request の CI は base+head のマージコミットを検査しているため取り込む内容自体は
       # 検証済みだが、それだけだと ops/watchdog.yml の「壊れたら通知」の網がマージ後に効かない。
       # workflow_dispatch は例外的に GITHUB_TOKEN でも run を作るので、検証系だけ明示的に起こす。
