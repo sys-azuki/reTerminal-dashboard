@@ -1,0 +1,3 @@
+# 共通の正本から写したファイルの一覧（手で直さない。変更の相談はこのリポジトリの issue へ）
+.common-checks
+.github/workflows/dependabot-automerge.yml
